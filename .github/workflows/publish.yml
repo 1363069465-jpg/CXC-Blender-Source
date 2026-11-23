@@ -1,0 +1,40 @@
+name: Publish Blender repository
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+concurrency:
+  group: blender-pages
+  cancel-in-progress: false
+jobs:
+  publish:
+    runs-on: ubuntu-22.04
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxrender1 libxi6 libxfixes3 libxkbcommon0 libsm6 libgl1
+          curl --fail --location --retry 3 https://download.blender.org/release/Blender4.3/blender-4.3.2-linux-x64.tar.xz -o /tmp/blender.tar.xz
+          tar -xf /tmp/blender.tar.xz -C /tmp
+          echo /tmp/blender-4.3.2-linux-x64 >> "$GITHUB_PATH"
+      - name: Build and validate extension
+        run: |
+          mkdir -p dist
+          blender --command extension validate extensions/product_visibility_manager
+          blender --command extension build --source-dir extensions/product_visibility_manager --output-dir dist
+          blender --command extension server-generate --repo-dir dist
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+      - name: Deploy repository
+        id: deployment
+        uses: actions/deploy-pages@v4
