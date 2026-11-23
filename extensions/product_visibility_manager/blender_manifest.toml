@@ -1,6 +1,6 @@
 schema_version = "1.0.0"
 id = "product_visibility_manager"
-version = "1.1.0"
+version = "1.1.1"
 name = "显隐管理"
 tagline = "保存和恢复父级及子物体的视口与渲染显隐状态"
 maintainer = "艺哥HOW雕鸭"
@@ -8,3 +8,6 @@ type = "add-on"
 website = "https://space.bilibili.com/216673059"
 blender_version_min = "4.3.0"
 license = ["SPDX:GPL-3.0-or-later"]
+
+[permissions]
+network = "手动检查 GitHub 更新源中的可用版本"

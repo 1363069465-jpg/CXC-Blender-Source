@@ -1,4 +1,5 @@
 import bpy
+from . import updater
 from bpy.props import BoolProperty, CollectionProperty, IntProperty, PointerProperty, StringProperty
 from bpy.types import AddonPreferences, Operator, Panel, PropertyGroup, UIList
 
@@ -295,8 +296,11 @@ class PVM_UL_variants(UIList):
 class PVM_Preferences(AddonPreferences):
     bl_idname = __package__
 
+    last_update_check: StringProperty(name="上次检查时间", default="尚未检查")
+
     def draw(self, context):
         layout = self.layout
+        updater.draw(layout, self)
         box = layout.box()
         box.label(text='使用说明', icon='HELP')
         for line in (
@@ -385,6 +389,7 @@ def register():
     # Fail before changing another add-on's properties or registering a duplicate copy.
     if hasattr(bpy.types.Object, 'pvm_data') or hasattr(bpy.types.Scene, 'pvm_target'):
         raise RuntimeError('显隐管理的同名属性已注册，请停用旧版或重复安装的插件后重启 Blender')
+    updater.register()
     registered = []
     try:
         for cls in CLASSES:
@@ -399,10 +404,12 @@ def register():
             del bpy.types.Object.pvm_data
         for cls in reversed(registered):
             bpy.utils.unregister_class(cls)
+        updater.unregister()
         raise
 
 
 def unregister():
+    updater.unregister()
     del bpy.types.Scene.pvm_target
     del bpy.types.Object.pvm_data
     for cls in reversed(CLASSES):
