@@ -1,6 +1,6 @@
 schema_version = "1.0.0"
 id = "product_visibility_manager"
-version = "1.1.1"
+version = "1.2.4"
 name = "显隐管理"
 tagline = "保存和恢复父级及子物体的视口与渲染显隐状态"
 maintainer = "艺哥HOW雕鸭"

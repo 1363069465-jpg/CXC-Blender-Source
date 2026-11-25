@@ -1,5 +1,5 @@
 import bpy
-from . import updater
+from . import updater, poses
 from bpy.props import BoolProperty, CollectionProperty, IntProperty, PointerProperty, StringProperty
 from bpy.types import AddonPreferences, Operator, Panel, PropertyGroup, UIList
 
@@ -25,7 +25,7 @@ def root_for(context):
 
 def recorded_roots(scene):
     # Include hidden/excluded objects, but never unrelated scenes.
-    return sorted((obj for obj in scene.objects if len(obj.pvm_data.variants)),
+    return sorted((obj for obj in scene.objects if len(obj.pvm_data.variants) or len(obj.pvm_pose_data.poses)),
                   key=lambda obj: obj.name.casefold())
 
 
@@ -109,11 +109,12 @@ class PVM_State(PropertyGroup):
 
 
 class PVM_Variant(PropertyGroup):
-    name: StringProperty(default='新形态')
+    name: StringProperty(default='形态01')
     states: CollectionProperty(type=PVM_State)
 
 
 class PVM_Data(PropertyGroup):
+    name_counter: IntProperty(default=0)
     variants: CollectionProperty(type=PVM_Variant)
     index: IntProperty(default=0)
 
@@ -142,8 +143,8 @@ class PVM_OT_pick_recorded(Operator):
 
     def execute(self, context):
         obj = context.scene.objects.get(self.object_name)
-        if obj is None or not len(obj.pvm_data.variants):
-            self.report({'WARNING'}, '该物体已移除、改名或没有显隐记录，请重新选择')
+        if obj is None or not (len(obj.pvm_data.variants) or len(obj.pvm_pose_data.poses)):
+            self.report({'WARNING'}, '该物体已移除、改名或没有记录，请重新选择')
             return {'CANCELLED'}
         context.scene.pvm_target = obj
         return {'FINISHED'}
@@ -153,14 +154,18 @@ class PVM_OT_record(Operator):
     bl_idname = 'pvm.record'
     bl_label = '记录当前形态'
     bl_options = {'REGISTER', 'UNDO'}
-    variant_name: StringProperty(name='形态名称', default='新形态')
+    variant_name: StringProperty(name='形态名称', default='', options={'SKIP_SAVE'})
 
     def invoke(self, context, event):
+        root = root_for(context)
+        if not root:
+            return {'CANCELLED'}
+        self.variant_name = poses.next_name(root.pvm_data, root.pvm_data.variants)
         return context.window_manager.invoke_props_dialog(self)
 
     def execute(self, context):
         root = root_for(context)
-        if not root or not self.variant_name.strip():
+        if not root:
             self.report({'ERROR'}, '请选择总父级并填写名称')
             return {'CANCELLED'}
         try:
@@ -168,8 +173,10 @@ class PVM_OT_record(Operator):
         except (ValueError, RuntimeError) as exc:
             self.report({'ERROR'}, str(exc))
             return {'CANCELLED'}
+        name = self.variant_name.strip() or poses.next_name(root.pvm_data, root.pvm_data.variants)
         variant = root.pvm_data.variants.add()
-        variant.name = self.variant_name.strip()
+        variant.name = name
+        poses.advance_name(root.pvm_data, name)
         write_states(root, variant, states)
         root.pvm_data.index = len(root.pvm_data.variants) - 1
         self.report({'INFO'}, '已记录 %d 个物体的三项显隐状态' % len(states))
@@ -288,7 +295,7 @@ class PVM_UL_variants(UIList):
 
     def draw_item(self, context, layout, data, item, icon, active_data, active_propname, index):
         row = layout.row(align=True)
-        row.prop(item, 'name', text='', emboss=False)
+        row.prop(item, 'name', text='', emboss=False, icon='OBJECT_DATA')
         row.label(text=str(len(item.states)))
         row.operator('pvm.apply', text='', icon='PLAY').index = index
 
@@ -312,6 +319,10 @@ class PVM_Preferences(AddonPreferences):
             '6. 保存 .blend；导入完整产品后重新指定原总父级。',
             '展开“父级对象”，可查看带记录的物体；点击吸管选用。',
             '7. 选中形态，点击列表左侧的上下三角按钮调整顺序。',
+            '8. 姿态记录：指定总父级，自动记录所有层级的子物体。',
+            '9. 调整子物体位置和旋转后点击姿态列表的＋保存，播放图标恢复姿态。',
+            '10. 姿态刷新重新记录当前子物体；移出父级的物体不受影响。',
+            '11. 姿态针对物体/空物体，不是骨骼姿态；动画和约束可能覆盖旋转。',
         ):
             box.label(text=line)
         layout.label(text='记录：物体小眼睛、显示器、相机', icon='INFO')
@@ -371,23 +382,23 @@ class PVM_PT_parents(Panel):
         layout = self.layout
         roots = recorded_roots(context.scene)
         if not roots:
-            layout.label(text='当前场景没有物体显隐记录', icon='INFO')
+            layout.label(text='当前场景没有显隐或姿态记录', icon='INFO')
             return
         for obj in roots:
             row = layout.row(align=True)
             row.label(text=obj.name, icon='OBJECT_DATA')
-            row.label(text=str(len(obj.pvm_data.variants)) + ' 条')
+            row.label(text='%d 显隐 / %d 姿态' % (len(obj.pvm_data.variants), len(obj.pvm_pose_data.poses)))
             row.operator('pvm.pick_recorded', text='', icon='EYEDROPPER').object_name = obj.name
 
 
 CLASSES = (PVM_State, PVM_Variant, PVM_Data, PVM_OT_target, PVM_OT_pick_recorded, PVM_OT_record,
            PVM_OT_apply, PVM_OT_update, PVM_OT_delete, PVM_OT_move, PVM_UL_variants,
-           PVM_Preferences, PVM_PT_panel, PVM_PT_parents)
+           PVM_Preferences, PVM_PT_panel, PVM_PT_parents) + poses.CLASSES
 
 
 def register():
     # Fail before changing another add-on's properties or registering a duplicate copy.
-    if hasattr(bpy.types.Object, 'pvm_data') or hasattr(bpy.types.Scene, 'pvm_target'):
+    if hasattr(bpy.types.Object, 'pvm_data') or hasattr(bpy.types.Scene, 'pvm_target') or hasattr(bpy.types.Object, 'pvm_pose_data'):
         raise RuntimeError('显隐管理的同名属性已注册，请停用旧版或重复安装的插件后重启 Blender')
     updater.register()
     registered = []
@@ -396,8 +407,11 @@ def register():
             bpy.utils.register_class(cls)
             registered.append(cls)
         bpy.types.Object.pvm_data = PointerProperty(type=PVM_Data)
+        bpy.types.Object.pvm_pose_data = PointerProperty(type=poses.PVM_PoseData)
         bpy.types.Scene.pvm_target = PointerProperty(type=bpy.types.Object, name='产品总父级')
     except Exception:
+        if hasattr(bpy.types.Object, 'pvm_pose_data'):
+            del bpy.types.Object.pvm_pose_data
         if hasattr(bpy.types.Scene, 'pvm_target'):
             del bpy.types.Scene.pvm_target
         if hasattr(bpy.types.Object, 'pvm_data'):
@@ -409,8 +423,10 @@ def register():
 
 
 def unregister():
+    poses.unregister_icons()
     updater.unregister()
     del bpy.types.Scene.pvm_target
+    del bpy.types.Object.pvm_pose_data
     del bpy.types.Object.pvm_data
     for cls in reversed(CLASSES):
         bpy.utils.unregister_class(cls)
